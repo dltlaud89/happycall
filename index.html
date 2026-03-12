@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>해피콜 명단 추출기</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f1a10;
+      color: #e2f0e3;
+      font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+      min-height: 100vh;
+      padding-bottom: 60px;
+    }
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: brightness(0) invert(1); cursor:pointer; transform:scale(1.3); }
+    textarea { font-family: 'Noto Sans KR', monospace; }
+    select option { background: #0f1a10; color: #e2f0e3; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0a120b; }
+    ::-webkit-scrollbar-thumb { background: #2a3e2c; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- 헤더 -->
+<div id="header" style="background:#0a120b;border-bottom:1px solid #2a3e2c;padding:15px 28px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10;">
+  <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e;"></div>
+  <span style="font-weight:800;font-size:16px;color:#bbf7d0;">해피콜 명단 추출기</span>
+  <span style="font-size:11px;color:#6b9e6e;">한의원 환자관리</span>
+  <span id="fileTag" style="margin-left:auto;display:none;background:#22c55e22;color:#22c55e;border:1px solid #22c55e55;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:700;"></span>
+</div>
+
+<div style="max-width:840px;margin:0 auto;padding:26px 18px;">
+
+  <!-- ① 업로드 -->
+  <div class="card">
+    <span class="section-label">① 파일 업로드</span>
+    <div id="dropZone" onclick="document.getElementById('fileInput').click()"
+      style="border:2px dashed #2a3e2c;border-radius:11px;padding:28px 20px;text-align:center;cursor:pointer;transition:all .2s;">
+      <div style="font-size:26px;margin-bottom:7px;">📂</div>
+      <div style="font-weight:700;font-size:14px;color:#bbf7d0;margin-bottom:3px;">파일 드래그 또는 클릭하여 선택</div>
+      <div style="font-size:12px;color:#6b9e6e;">xlsx · xls · csv — 헤더 위치 자동 탐색</div>
+      <input id="fileInput" type="file" accept=".csv,.xlsx,.xls" style="display:none;"/>
+    </div>
+  </div>
+
+  <!-- ② 컬럼 감지 -->
+  <div id="colSection" class="card" style="display:none;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <span class="section-label" style="margin-bottom:0;">② 컬럼 자동 감지 결과</span>
+      <span style="background:#34d39922;color:#34d399;border:1px solid #34d39955;border-radius:6px;padding:2px 9px;font-size:10px;font-weight:700;">시트에서 직접 읽음</span>
+    </div>
+    <div id="colGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;"></div>
+    <div style="margin-top:12px;">
+      <button onclick="toggleDebug()" style="background:transparent;border:1px solid #2a3e2c;border-radius:7px;padding:5px 12px;color:#6b9e6e;font-size:11px;cursor:pointer;">
+        🔍 환자구분 실제 값 확인 <span id="debugArrow">▼</span>
+      </button>
+      <div id="debugBox" style="display:none;margin-top:8px;background:#0a120b;border-radius:9px;padding:12px 14px;">
+        <div style="font-size:11px;color:#6b9e6e;margin-bottom:8px;">시트 내 환자구분 컬럼의 고유 값 목록 — 녹색이 비급여로 인식됩니다.</div>
+        <div id="typeValueList" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+        <div id="noMatchWarn" style="display:none;margin-top:8px;color:#f87171;font-size:12px;">⚠️ 비급여로 인식되는 값이 없습니다. 위 값을 확인하고 컬럼 매핑이 맞는지 확인해주세요.</div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#6b9e6e;margin-top:10px;">※ 잘못 감지된 항목은 드롭다운으로 직접 수정하세요.</div>
+  </div>
+
+  <!-- ③ 기간 설정 -->
+  <div id="dateSection" class="card" style="display:none;">
+    <span class="section-label">③ 추출 기간 설정 (1진 날짜 기준)</span>
+    <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;">
+      <div>
+        <div style="font-size:12px;color:#bbf7d0;margin-bottom:6px;font-weight:700;">📅 시작일</div>
+        <input type="date" id="dateFrom" style="background:#1e3a22;border:2px solid #4ade80;border-radius:8px;padding:11px 14px;color:#e2f0e3;font-size:14px;font-weight:600;outline:none;width:100%;color-scheme:dark;"/>
+      </div>
+      <div style="color:#6b9e6e;font-size:18px;padding-top:20px;">~</div>
+      <div>
+        <div style="font-size:12px;color:#bbf7d0;margin-bottom:6px;font-weight:700;">📅 종료일</div>
+        <input type="date" id="dateTo" style="background:#1e3a22;border:2px solid #4ade80;border-radius:8px;padding:11px 14px;color:#e2f0e3;font-size:14px;font-weight:600;outline:none;width:100%;color-scheme:dark;"/>
+      </div>
+    </div>
+    <div style="margin-top:12px;background:#0a120b;border-radius:9px;padding:10px 14px;font-size:11px;color:#6b9e6e;line-height:1.8;">
+      <b style="color:#bbf7d0;">비급여 환자 포함 기준</b><br/>
+      from 시작일 직전일이 1진인 마지막 행 이후 ~ to 종료일 다음날이 1진인 첫 행 이전까지
+    </div>
+  </div>
+
+  <!-- 추출 버튼 -->
+  <button id="extractBtn" onclick="extract()" style="display:none;width:100%;padding:15px;border-radius:12px;border:none;background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;font-weight:800;font-size:16px;cursor:pointer;margin-bottom:24px;box-shadow:0 4px 20px #16a34a55;">
+    🔍 명단 추출하기
+  </button>
+
+  <!-- 결과 -->
+  <div id="result1Box" style="display:none;" class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span style="font-weight:800;font-size:16px;color:#bbf7d0;">이탈우려 환자</span>
+      <span style="background:#f9731622;color:#f97316;border:1px solid #f9731655;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:700;">1진만 내원</span>
+      <div id="count1" style="margin-left:auto;border-radius:8px;padding:4px 14px;font-weight:800;font-size:18px;"></div>
+    </div>
+    <div style="font-size:11px;color:#6b9e6e;margin-bottom:10px;">📌 1진 날짜는 있으나 2진·3진이 비어있는 환자</div>
+    <textarea id="textarea1" readonly onclick="this.select()" style="width:100%;background:#0a120b;border:1px solid #2a3e2c;border-radius:9px;padding:13px 14px;color:#e2f0e3;font-size:13px;line-height:1.85;outline:none;resize:vertical;min-height:72px;"></textarea>
+    <div style="display:flex;gap:9px;margin-top:10px;">
+      <button onclick="copyText(1)" id="copyBtn1" style="flex:1;padding:10px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:700;font-size:13px;cursor:pointer;">📋 텍스트 복사</button>
+      <button onclick="selectAll(1)" style="padding:10px 15px;border-radius:9px;border:1px solid #2a3e2c;background:transparent;color:#6b9e6e;font-size:12px;cursor:pointer;">전체선택</button>
+    </div>
+  </div>
+
+  <div id="result2Box" style="display:none;" class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span style="font-weight:800;font-size:16px;color:#bbf7d0;">비급여 환자</span>
+      <span style="background:#818cf822;color:#818cf8;border:1px solid #818cf855;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:700;">다이어트·한약·한방약</span>
+      <div id="count2" style="margin-left:auto;border-radius:8px;padding:4px 14px;font-weight:800;font-size:18px;"></div>
+    </div>
+    <div style="font-size:11px;color:#6b9e6e;margin-bottom:10px;">📌 환자구분이 '비급여'인 환자 (행 위치 기준)</div>
+    <textarea id="textarea2" readonly onclick="this.select()" style="width:100%;background:#0a120b;border:1px solid #2a3e2c;border-radius:9px;padding:13px 14px;color:#e2f0e3;font-size:13px;line-height:1.85;outline:none;resize:vertical;min-height:72px;"></textarea>
+    <div style="display:flex;gap:9px;margin-top:10px;">
+      <button onclick="copyText(2)" id="copyBtn2" style="flex:1;padding:10px;border-radius:9px;border:none;background:#16a34a;color:#fff;font-weight:700;font-size:13px;cursor:pointer;">📋 텍스트 복사</button>
+      <button onclick="selectAll(2)" style="padding:10px 15px;border-radius:9px;border:1px solid #2a3e2c;background:transparent;color:#6b9e6e;font-size:12px;cursor:pointer;">전체선택</button>
+    </div>
+  </div>
+
+</div>
+
+<style>
+  .card { background:#162118; border:1px solid #2a3e2c; border-radius:14px; padding:22px; margin-bottom:18px; }
+  .section-label { font-size:11px; font-weight:700; color:#6b9e6e; letter-spacing:1px; display:block; margin-bottom:10px; }
+  .col-card { border-radius:9px; padding:10px 13px; }
+  .col-card select { background:#0a120b; border:1px solid #2a3e2c; border-radius:8px; padding:5px 8px; color:#e2f0e3; font-size:11px; outline:none; width:100%; margin-top:6px; color-scheme:dark; }
+</style>
+
+<script>
+// ── 전역 상태 ─────────────────────────────────────────────
+let allRows = [];
+let headers = [];
+let colMap  = {};
+
+const FIELD_PATTERNS = {
+  name:   [/환자\s*이름/, /이름/, /성명/, /name/i],
+  doctor: [/진료의/, /담당의/, /의사/],
+  type:   [/환자\s*구분/, /구분/, /분류/],
+  next:   [/다음\s*내원/, /내원\s*간격/, /예후/],
+  call:   [/해피콜/, /통화\s*내역/, /통화/],
+  v1:     [/^1\s*진$/, /1진/, /초진/],
+  v2:     [/^2\s*진$/, /2진/, /재진/],
+  v3:     [/^3\s*진$/, /3진/],
+};
+
+const LABELS = { name:"환자이름", type:"환자구분", next:"다음내원/간격/예후", call:"해피콜통화내역", v1:"1진", v2:"2진", v3:"3진" };
+const KEY_FIELDS = ["name","type","next","call","v1","v2","v3"];
+
+// ── 컬럼 자동 감지 ────────────────────────────────────────
+function detectColumns(headerRow) {
+  const map = {}, used = new Set();
+  for (const [field, patterns] of Object.entries(FIELD_PATTERNS)) {
+    for (const pat of patterns) {
+      const idx = headerRow.findIndex((h, i) => !used.has(i) && pat.test(String(h ?? "").trim()));
+      if (idx !== -1) { map[field] = idx; used.add(idx); break; }
+    }
+  }
+  return map;
+}
+
+// ── 날짜 파싱 ─────────────────────────────────────────────
+function parseDate(val, refYear) {
+  if (val == null || val === "") return null;
+  if (typeof val === "number" && val > 30000 && val < 60000) {
+    const d = new Date(Date.UTC(1900, 0, 1) + (val - 2) * 86400000);
+    return isNaN(d) ? null : d;
+  }
+  const s = String(val).trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{2,4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+  if (m) {
+    let y = parseInt(m[1]); if (y < 100) y += 2000;
+    return new Date(y, parseInt(m[2]) - 1, parseInt(m[3]));
+  }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m) return new Date(refYear || new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]));
+  m = s.match(/^(\d{1,2})\.(\d{1,2})$/);
+  if (m) return new Date(refYear || new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]));
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+function fmtDate(d) {
+  if (!d) return "";
+  return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")}`;
+}
+function inRange(date, from, to) {
+  if (!date) return false;
+  const t = date.getTime();
+  return t >= (from ? from.getTime() : -Infinity) && t <= (to ? to.getTime() + 86399999 : Infinity);
+}
+function blank(val) { return val == null || String(val).trim() === ""; }
+
+// ── 파일 처리 ─────────────────────────────────────────────
+const dropZone = document.getElementById("dropZone");
+dropZone.addEventListener("dragover",  e => { e.preventDefault(); dropZone.style.borderColor="#22c55e"; dropZone.style.background="#1a2e1c"; });
+dropZone.addEventListener("dragleave", () => { dropZone.style.borderColor="#2a3e2c"; dropZone.style.background="transparent"; });
+dropZone.addEventListener("drop", e => {
+  e.preventDefault(); dropZone.style.borderColor="#2a3e2c"; dropZone.style.background="transparent";
+  if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]);
+});
+document.getElementById("fileInput").addEventListener("change", e => { if (e.target.files[0]) processFile(e.target.files[0]); });
+
+function processFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = XLSX.read(new Uint8Array(e.target.result), { type:"array", cellDates:false });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+
+    // 헤더 행 자동 탐색
+    let headerRowIdx = 0, bestScore = 0;
+    for (let i = 0; i < raw.length; i++) {
+      const joined = raw[i].map(c => String(c ?? "")).join(" ");
+      const score = (joined.match(/환자이름|환자\s*이름|이름|진료의|환자구분|구분|1진|2진|3진|해피콜|다음내원|내원간격|자보/g) || []).length;
+      if (score > bestScore) { bestScore = score; headerRowIdx = i; }
+    }
+
+    headers  = raw[headerRowIdx].map(c => String(c ?? "").trim());
+    allRows  = raw.slice(headerRowIdx + 1).filter(r => r.some(c => String(c).trim() !== ""));
+    colMap   = detectColumns(headers);
+
+    // 파일 태그 업데이트
+    const tag = document.getElementById("fileTag");
+    tag.textContent = `📄 ${file.name} · ${allRows.length}행`;
+    tag.style.display = "inline";
+
+    renderColGrid();
+    renderTypeValues();
+    document.getElementById("colSection").style.display = "block";
+    document.getElementById("dateSection").style.display = "block";
+    document.getElementById("extractBtn").style.display  = "block";
+    document.getElementById("result1Box").style.display  = "none";
+    document.getElementById("result2Box").style.display  = "none";
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── 컬럼 그리드 렌더 ──────────────────────────────────────
+function renderColGrid() {
+  const grid = document.getElementById("colGrid");
+  grid.innerHTML = "";
+  KEY_FIELDS.forEach(f => {
+    const idx   = colMap[f];
+    const found = idx !== undefined;
+    const div   = document.createElement("div");
+    div.className = "col-card";
+    div.style.background = found ? "#0f2212" : "#1a0e0e";
+    div.style.border = `1px solid ${found ? "#2d6a31" : "#4a2020"}`;
+
+    const label = document.createElement("div");
+    label.style.cssText = "font-size:11px;color:#6b9e6e;margin-bottom:4px;";
+    label.textContent = LABELS[f];
+
+    const status = document.createElement("div");
+    status.style.cssText = `font-weight:700;font-size:12px;color:${found?"#4ade80":"#f87171"};`;
+    status.innerHTML = found
+      ? `✓ "${headers[idx]}" <span style="font-size:10px;color:#6b9e6e;font-weight:400;">(${idx+1}열)</span>`
+      : "✗ 감지 못함";
+
+    const sel = document.createElement("select");
+    sel.innerHTML = `<option value="">— 직접 선택 —</option>` +
+      headers.map((h, i) => `<option value="${i}" ${i===idx?"selected":""}>${i+1}열: ${h||"(빈칸)"}</option>`).join("");
+    sel.addEventListener("change", () => {
+      colMap[f] = sel.value === "" ? undefined : Number(sel.value);
+      renderColGrid();
+      renderTypeValues();
+    });
+
+    div.append(label, status, sel);
+    grid.appendChild(div);
+  });
+}
+
+// ── 환자구분 값 디버그 ────────────────────────────────────
+function renderTypeValues() {
+  const typeIdx = colMap["type"];
+  const listEl  = document.getElementById("typeValueList");
+  const warnEl  = document.getElementById("noMatchWarn");
+  listEl.innerHTML = "";
+  if (typeIdx === undefined) return;
+
+  const vals = [...new Set(allRows.map(r => String(r[typeIdx] ?? "").trim()).filter(v => v !== ""))];
+  let anyMatch = false;
+  vals.forEach(v => {
+    const clean = v.replace(/[\s\u00A0\u3000]/g, "");
+    const match = clean.includes("비급여");
+    if (match) anyMatch = true;
+    const span = document.createElement("span");
+    span.style.cssText = `background:${match?"#16301a":"#1a1a1a"};border:1px solid ${match?"#2d6a31":"#333"};border-radius:6px;padding:4px 10px;font-size:12px;color:${match?"#4ade80":"#6b9e6e"};font-family:monospace;`;
+    span.textContent = (match ? "✓ " : "") + `"${v}"` + (match ? " (인식됨)" : "");
+    listEl.appendChild(span);
+  });
+  warnEl.style.display = anyMatch ? "none" : "block";
+}
+
+function toggleDebug() {
+  const box = document.getElementById("debugBox");
+  const arrow = document.getElementById("debugArrow");
+  const visible = box.style.display !== "none";
+  box.style.display   = visible ? "none" : "block";
+  arrow.textContent   = visible ? "▼" : "▲";
+}
+
+// ── 추출 ─────────────────────────────────────────────────
+function extract() {
+  const fromVal = document.getElementById("dateFrom").value;
+  const toVal   = document.getElementById("dateTo").value;
+  const from = fromVal ? new Date(fromVal) : null;
+  const to   = toVal   ? new Date(toVal)   : null;
+  const refYear = from ? from.getFullYear() : new Date().getFullYear();
+
+  const g = (row, f) => (colMap[f] !== undefined ? row[colMap[f]] : "") ?? "";
+
+  // 비급여 행 범위 계산
+  let biStart = 0, biEnd = allRows.length - 1;
+
+  if (from) {
+    const dayBefore = new Date(from); dayBefore.setDate(dayBefore.getDate() - 1);
+    let lastBefore = -1;
+    allRows.forEach((row, idx) => {
+      const d = parseDate(g(row, "v1"), refYear);
+      if (d && fmtDate(d) === fmtDate(dayBefore)) lastBefore = idx;
+    });
+    if (lastBefore !== -1) biStart = lastBefore + 1;
+  }
+
+  if (to) {
+    const dayAfter = new Date(to); dayAfter.setDate(dayAfter.getDate() + 1);
+    let firstAfter = -1;
+    for (let i = 0; i < allRows.length; i++) {
+      const d = parseDate(g(allRows[i], "v1"), refYear);
+      if (d && fmtDate(d) === fmtDate(dayAfter)) { firstAfter = i; break; }
+    }
+    if (firstAfter !== -1) biEnd = firstAfter - 1;
+  }
+
+  const list1 = [], list2 = [];
+
+  allRows.forEach((row, idx) => {
+    const name      = String(g(row, "name")).trim();
+    const typeClean = String(g(row, "type")).replace(/[\s\u00A0\u3000]/g, "");
+    const next      = String(g(row, "next")).trim();
+    const call      = String(g(row, "call")).trim();
+    const v1 = g(row, "v1"), v2 = g(row, "v2"), v3 = g(row, "v3");
+    if (!name) return;
+
+    const date1  = parseDate(v1, refYear);
+    const inDate = inRange(date1, from, to);
+
+    // 규칙1: 이탈우려
+    if (inDate && date1 && blank(v2) && blank(v3)) {
+      list1.push({ name, date1: fmtDate(date1) });
+    }
+
+    // 규칙2: 비급여
+    if (typeClean.includes("비급여")) {
+      const noFilter   = !from && !to;
+      const inRowRange = idx >= biStart && idx <= biEnd;
+      if (noFilter || inRowRange) {
+        list2.push({ name, next, call });
+      }
+    }
+  });
+
+  renderResult(list1, list2, fromVal, toVal);
+}
+
+function renderResult(list1, list2, fromVal, toVal) {
+  const periodStr = `${fromVal||"전체"} ~ ${toVal||"전체"}`;
+
+  // 이탈우려
+  const t1 = list1.length === 0 ? "해당 환자 없음" :
+    [`◎ 이탈우려 환자 (${list1.length}명)`,
+     `기간: ${periodStr} | 1진만 내원, 2·3진 없음`,
+     "─".repeat(32),
+     ...list1.map(p => `${p.name}  (1진: ${p.date1})`)
+    ].join("\n");
+
+  const ta1 = document.getElementById("textarea1");
+  ta1.value = t1;
+  ta1.style.minHeight = Math.max(72, Math.min(40 + list1.length * 36, 400)) + "px";
+  ta1.style.color = list1.length > 0 ? "#e2f0e3" : "#6b9e6e";
+
+  const c1 = document.getElementById("count1");
+  c1.textContent = `${list1.length}명`;
+  c1.style.background = list1.length > 0 ? "#f9731622" : "#1a2a1c";
+  c1.style.border = `1px solid ${list1.length > 0 ? "#f9731655" : "#2a3e2c"}`;
+  c1.style.color  = list1.length > 0 ? "#f97316" : "#6b9e6e";
+
+  // 비급여
+  const t2 = list2.length === 0 ? "해당 환자 없음" :
+    [`◎ 비급여 환자 (${list2.length}명)`,
+     `기간: ${periodStr} | 환자구분 = 비급여`,
+     "─".repeat(32),
+     ...list2.map(p => {
+       const lines = [p.name];
+       if (p.next) lines.push(`   ▸ 다음내원/간격/예후: ${p.next}`);
+       if (p.call) lines.push(`   ▸ 해피콜 통화내역: ${p.call}`);
+       return lines.join("\n");
+     })
+    ].join("\n");
+
+  const ta2 = document.getElementById("textarea2");
+  ta2.value = t2;
+  ta2.style.minHeight = Math.max(72, Math.min(40 + list2.length * 36, 400)) + "px";
+  ta2.style.color = list2.length > 0 ? "#e2f0e3" : "#6b9e6e";
+
+  const c2 = document.getElementById("count2");
+  c2.textContent = `${list2.length}명`;
+  c2.style.background = list2.length > 0 ? "#818cf822" : "#1a2a1c";
+  c2.style.border = `1px solid ${list2.length > 0 ? "#818cf855" : "#2a3e2c"}`;
+  c2.style.color  = list2.length > 0 ? "#818cf8" : "#6b9e6e";
+
+  document.getElementById("result1Box").style.display = "block";
+  document.getElementById("result2Box").style.display = "block";
+}
+
+// ── 복사 ──────────────────────────────────────────────────
+async function copyText(n) {
+  const ta  = document.getElementById(`textarea${n}`);
+  const btn = document.getElementById(`copyBtn${n}`);
+  try { await navigator.clipboard.writeText(ta.value); }
+  catch { ta.select(); document.execCommand("copy"); }
+  btn.textContent = "✅ 복사 완료!";
+  btn.style.background = "#166534";
+  setTimeout(() => { btn.textContent = "📋 텍스트 복사"; btn.style.background = "#16a34a"; }, 2000);
+}
+
+function selectAll(n) {
+  document.getElementById(`textarea${n}`).select();
+}
+</script>
+</body>
+</html>
