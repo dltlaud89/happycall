@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -26,6 +27,16 @@
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #0a120b; }
     ::-webkit-scrollbar-thumb { background: #2a3e2c; border-radius: 3px; }
+    /* 경계 모달 */
+    #boundaryModal { display:none; position:fixed; inset:0; background:#00000088; z-index:999; align-items:center; justify-content:center; }
+    #boundaryModal.show { display:flex; }
+    .modal-box { background:#162118; border:1px solid #2a3e2c; border-radius:16px; padding:28px 26px; max-width:460px; width:90%; }
+    .modal-box h3 { font-size:15px; font-weight:800; color:#bbf7d0; margin-bottom:10px; }
+    .modal-box p  { font-size:13px; color:#a5d6a7; line-height:1.8; margin-bottom:6px; }
+    .modal-warn   { background:#1a2a0a; border:1px solid #4a7a2c; border-radius:9px; padding:10px 13px; font-size:12px; color:#fbbf24; margin:12px 0; line-height:1.7; }
+    .modal-btns   { display:flex; gap:10px; margin-top:18px; }
+    .modal-btn-confirm { flex:1; padding:11px; border-radius:9px; border:none; background:linear-gradient(135deg,#16a34a,#22c55e); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+    .modal-btn-cancel  { padding:11px 18px; border-radius:9px; border:1px solid #2a3e2c; background:transparent; color:#6b9e6e; font-size:13px; cursor:pointer; }
   </style>
 </head>
 <body>
@@ -36,6 +47,20 @@
   <span style="font-weight:800;font-size:16px;color:#bbf7d0;">해피콜 명단 추출기</span>
   <span style="font-size:11px;color:#6b9e6e;">한의원 환자관리</span>
   <span id="fileTag" style="margin-left:auto;display:none;background:#22c55e22;color:#22c55e;border:1px solid #22c55e55;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:700;"></span>
+</div>
+
+<!-- 경계 못찾을 때 확인 모달 -->
+<div id="boundaryModal">
+  <div class="modal-box">
+    <h3>⚠️ 경계 날짜를 찾지 못했습니다</h3>
+    <p id="modalMsg"></p>
+    <div class="modal-warn" id="modalWarn"></div>
+    <p style="font-size:12px;color:#6b9e6e;">이 경우 <b style="color:#fbbf24;">가장 가까운 날짜</b>를 경계로 사용합니다.<br/>그래도 진행하시겠습니까?</p>
+    <div class="modal-btns">
+      <button class="modal-btn-confirm" onclick="confirmExtract()">그래도 진행하기</button>
+      <button class="modal-btn-cancel"  onclick="closeModal()">날짜 다시 설정</button>
+    </div>
+  </div>
 </div>
 
 <div style="max-width:840px;margin:0 auto;padding:26px 18px;">
@@ -330,17 +355,19 @@ function toggleDebug() {
 }
 
 // ── 추출 ─────────────────────────────────────────────────
+let _pendingExtract = null; // 모달 확인 후 실행할 파라미터 저장
+
 function extract() {
   const fromVal = document.getElementById("dateFrom").value;
   const toVal   = document.getElementById("dateTo").value;
   const from = fromVal ? new Date(fromVal) : null;
   const to   = toVal   ? new Date(toVal)   : null;
   const refYear = from ? from.getFullYear() : new Date().getFullYear();
-
   const g = (row, f) => (colMap[f] !== undefined ? row[colMap[f]] : "") ?? "";
 
   // 비급여 행 범위 계산
   let biStart = 0, biEnd = allRows.length - 1;
+  let warnings = [];
 
   if (from) {
     const dayBefore = new Date(from); dayBefore.setDate(dayBefore.getDate() - 1);
@@ -349,7 +376,23 @@ function extract() {
       const d = parseDate(g(row, "v1"), refYear);
       if (d && fmtDate(d) === fmtDate(dayBefore)) lastBefore = idx;
     });
-    if (lastBefore !== -1) biStart = lastBefore + 1;
+    if (lastBefore !== -1) {
+      biStart = lastBefore + 1;
+    } else {
+      // 직전일 없음 → 시작일보다 이전 날짜 중 가장 가까운 날짜의 마지막 행 찾기
+      let closestIdx = -1;
+      allRows.forEach((row, idx) => {
+        const d = parseDate(g(row, "v1"), refYear);
+        if (d && d < from) closestIdx = idx; // 마지막으로 from 이전인 행
+      });
+      if (closestIdx !== -1) {
+        biStart = closestIdx + 1;
+        const closestDate = parseDate(g(allRows[closestIdx], "v1"), refYear);
+        warnings.push(`시작 경계: ${fmtDate(dayBefore)} 날짜 없음 → 가장 가까운 이전 날짜(${fmtDate(closestDate)}) 기준으로 설정`);
+      } else {
+        warnings.push(`시작 경계: ${fmtDate(dayBefore)} 날짜 없음 → 시트 처음부터 포함`);
+      }
+    }
   }
 
   if (to) {
@@ -359,9 +402,53 @@ function extract() {
       const d = parseDate(g(allRows[i], "v1"), refYear);
       if (d && fmtDate(d) === fmtDate(dayAfter)) { firstAfter = i; break; }
     }
-    if (firstAfter !== -1) biEnd = firstAfter - 1;
+    if (firstAfter !== -1) {
+      biEnd = firstAfter - 1;
+    } else {
+      // 다음날 없음 → 종료일보다 이후 날짜 중 가장 가까운 날짜의 첫 행 찾기
+      let closestIdx = -1;
+      for (let i = 0; i < allRows.length; i++) {
+        const d = parseDate(g(allRows[i], "v1"), refYear);
+        if (d && d > to) { closestIdx = i; break; }
+      }
+      if (closestIdx !== -1) {
+        biEnd = closestIdx - 1;
+        const closestDate = parseDate(g(allRows[closestIdx], "v1"), refYear);
+        warnings.push(`끝 경계: ${fmtDate(dayAfter)} 날짜 없음 → 가장 가까운 이후 날짜(${fmtDate(closestDate)}) 기준으로 설정`);
+      } else {
+        warnings.push(`끝 경계: ${fmtDate(dayAfter)} 날짜 없음 → 시트 끝까지 포함`);
+      }
+    }
   }
 
+  // 경고가 있으면 모달 표시 후 대기
+  if (warnings.length > 0) {
+    _pendingExtract = { from, to, fromVal, toVal, refYear, biStart, biEnd };
+    document.getElementById("modalMsg").textContent =
+      "지정한 날짜 범위의 경계 날짜가 시트에 없어서 가장 가까운 날짜로 자동 조정했습니다.";
+    document.getElementById("modalWarn").innerHTML = warnings.map(w => "• " + w).join("<br/>");
+    document.getElementById("boundaryModal").classList.add("show");
+    return;
+  }
+
+  doExtract(from, to, fromVal, toVal, refYear, biStart, biEnd);
+}
+
+function confirmExtract() {
+  closeModal();
+  if (_pendingExtract) {
+    const { from, to, fromVal, toVal, refYear, biStart, biEnd } = _pendingExtract;
+    doExtract(from, to, fromVal, toVal, refYear, biStart, biEnd);
+    _pendingExtract = null;
+  }
+}
+
+function closeModal() {
+  document.getElementById("boundaryModal").classList.remove("show");
+}
+
+function doExtract(from, to, fromVal, toVal, refYear, biStart, biEnd) {
+  const g = (row, f) => (colMap[f] !== undefined ? row[colMap[f]] : "") ?? "";
   const list1 = [], list2 = [];
 
   allRows.forEach((row, idx) => {
